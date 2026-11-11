@@ -91,3 +91,52 @@ padding: 12px 0;
 .link{
 color: #ffffff;
 text-decoration: none;
+}
+
+/* Estilos para o container central do jogo */
+.container-jogo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 70vh; /* Garante espaço suficiente entre cabeçalho e rodapé */
+    padding: 20px;
+    background-color: #121212;
+    color: #ffffff;
+    font-family: 'Courier New', Courier, monospace;
+}
+
+.painel-info {
+    text-align: center;
+    margin-bottom: 15px;
+}
+
+.painel-info h2 {
+    margin: 0 0 8px 0;
+    color: #ffcc00;
+    letter-spacing: 2px;
+    font-size: 28px;
+}
+
+.painel-info p {
+    margin: 0;
+    font-size: 14px;
+    color: #cccccc;
+}
+
+/* Moldura da tela do jogo */
+.tela-wrapper {
+    border: 6px solid #333333;
+    border-radius: 8px;
+    box-shadow: 0 0 25px rgba(0, 0, 0, 0.8);
+    background-color: #000000;
+    overflow: hidden;
+    max-width: 100%;
+}
+
+/* Responsividade básica para telas menores */
+#jogoEnduro {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
