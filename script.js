@@ -1,328 +1,303 @@
-const canvas = document.getElementById('jogoEnduro');
+const canvas = document.getElementById('jogoDamas');
 const ctx = canvas.getContext('2d');
 
-// Configurações Gerais
-const LARGURA = canvas.width;
-const ALTURA = canvas.height;
-const HORIZONTE = ALTURA * 0.42;
+const turnoTexto = document.getElementById('turnoTexto');
+const placarVermelho = document.getElementById('placarVermelho');
+const placarPreto = document.getElementById('placarPreto');
+const btnReiniciar = document.getElementById('btnReiniciar');
 
-// Estados do Jogo
-let estado = 'MENU'; // MENU, JOGANDO, GAMEOVER
-let dia = 1;
-let metaUltrapassagens = 20;
-let carrosUltrapassados = 0;
-let tempoRestante = 60; // Segundos por dia
-let ultimoTempo = 0;
+// Configurações do Tabuleiro
+const LINHAS = 8;
+const COLUNAS = 8;
+const TAMANHO_CASA = canvas.width / COLUNAS;
 
-// Climas: 0 = Dia, 1 = Pôr do Sol, 2 = Noite, 3 = Neblina
-let climaAtual = 0;
-let tempoClima = 0;
+// Constantes de Peças
+const VAZIO = 0;
+const VERMELHO = 1;
+const PRETO = 2;
+const DAMA_VERMELHA = 3;
+const DAMA_PRETA = 4;
 
-// Variáveis da Pista
-let distanciaPercorrida = 0;
-let curvaturaAtual = 0;
-let curvaturaAlvo = 0;
-let tempoCurva = 0;
+// Estado do Jogo
+let tabuleiro = [];
+let turnoAtual = VERMELHO;
+let pecaSelecionada = null;
+let movimentosValidos = [];
+let emCapturaMultipla = false;
+let vencedor = null;
 
-// Jogador
-const jogador = {
-    x: 0, // -1 (esquerda) a 1 (direita)
-    velocidade: 0,
-    velMax: 14,
-    largura: 64,
-    altura: 34,
-    cor: '#e60000'
-};
-
-// Inimigos
-let inimigos = [];
-const CORES_INIMIGOS = ['#0066ff', '#00cc44', '#ffcc00', '#cc00cc', '#00cccc', '#ff6600'];
-
-// Controles
-const teclas = {
-    ArrowLeft: false,
-    ArrowRight: false,
-    ArrowUp: false,
-    ArrowDown: false
-};
-
-window.addEventListener('keydown', (e) => {
-    if (teclas.hasOwnProperty(e.code)) {
-        e.preventDefault(); // Evita rolar a página com as setas
-        teclas[e.code] = true;
-    }
-    if (e.code === 'Space' && (estado === 'MENU' || estado === 'GAMEOVER')) {
-        iniciarJogo();
-    }
-});
-
-window.addEventListener('keyup', (e) => {
-    if (teclas.hasOwnProperty(e.code)) {
-        teclas[e.code] = false;
-    }
-});
-
-// Suporte a clique para iniciar/reiniciar
-canvas.addEventListener('click', () => {
-    if (estado === 'MENU' || estado === 'GAMEOVER') {
-        iniciarJogo();
-    }
-});
-
+// Inicializa o jogo
 function iniciarJogo() {
-    dia = 1;
-    metaUltrapassagens = 15;
-    carrosUltrapassados = 0;
-    tempoRestante = 60;
-    climaAtual = 0;
-    tempoClima = 0;
-    jogador.x = 0;
-    jogador.velocidade = 4;
-    inimigos = [];
-    curvaturaAtual = 0;
-    curvaturaAlvo = 0;
-    estado = 'JOGANDO';
-    ultimoTempo = performance.now();
-}
+    tabuleiro = Array.from({ length: LINHAS }, () => Array(COLUNAS).fill(VAZIO));
+    turnoAtual = VERMELHO;
+    pecaSelecionada = null;
+    movimentosValidos = [];
+    emCapturaMultipla = false;
+    vencedor = null;
 
-function avancarDia() {
-    dia++;
-    metaUltrapassagens += 5;
-    carrosUltrapassados = 0;
-    tempoRestante = 60;
-}
-
-// Gerador de Inimigos
-function gerenciarInimigos() {
-    if (inimigos.length < 4 && Math.random() < 0.03) {
-        // Evita nascer muito perto de outro carro
-        const podeNascer = inimigos.every(inimigo => inimigo.z < 0.8);
-        if (podeNascer) {
-            inimigos.push({
-                x: (Math.random() * 1.4) - 0.7, // Posição na pista (-0.7 a 0.7)
-                z: 1.0, // 1.0 = horizonte, 0.0 = câmera
-                velocidade: 4 + Math.random() * 4,
-                cor: CORES_INIMIGOS[Math.floor(Math.random() * CORES_INIMIGOS.length)],
-                ultrapassado: false
-            });
+    // Posiciona peças pretas (topo) e vermelhas (base)
+    for (let l = 0; l < LINHAS; l++) {
+        for (let c = 0; c < COLUNAS; c++) {
+            if ((l + c) % 2 !== 0) {
+                if (l < 3) tabuleiro[l][c] = PRETO;
+                else if (l > 4) tabuleiro[l][c] = VERMELHO;
+            }
         }
     }
+
+    atualizarInterface();
+    desenhar();
 }
 
-// Atualização da Lógica
-function atualizar(dt) {
-    if (estado !== 'JOGANDO') return;
+// Verifica se a peça pertence ao jogador do turno
+function pertenceAoJogador(peca, jogador) {
+    if (jogador === VERMELHO) return peca === VERMELHO || peca === DAMA_VERMELHA;
+    if (jogador === PRETO) return peca === PRETO || peca === DAMA_PRETA;
+    return false;
+}
 
-    // Cronômetro do Dia
-    tempoRestante -= dt;
-    if (tempoRestante <= 0) {
-        if (carrosUltrapassados >= metaUltrapassagens) {
-            avancarDia();
-        } else {
-            estado = 'GAMEOVER';
+function ehDama(peca) {
+    return peca === DAMA_VERMELHA || peca === DAMA_PRETA;
+}
+
+// Calcula movimentos possíveis para uma peça
+function obterMovimentosPeca(linha, col, apenasCapturas = false) {
+    const peca = tabuleiro[linha][col];
+    if (peca === VAZIO) return [];
+
+    const movimentos = [];
+    const direcoes = [
+        [-1, -1], [-1, 1], // Cima-esquerda, Cima-direita
+        [1, -1],  [1, 1]   // Baixo-esquerda, Baixo-direita
+    ];
+
+    for (const [dl, dc] of direcoes) {
+        // Peças comuns só andam para frente em movimentos simples
+        const direcaoPermitida = (peca === VERMELHO && dl === -1) || (peca === PRETO && dl === 1) || ehDama(peca);
+
+        const nl = linha + dl;
+        const nc = col + dc;
+
+        if (dentroDoTabuleiro(nl, nc)) {
+            // Movimento simples
+            if (!apenasCapturas && direcaoPermitida && tabuleiro[nl][nc] === VAZIO) {
+                movimentos.push({ linha: nl, col: nc, captura: null });
+            }
+
+            // Movimento de captura (pode capturar para frente ou para trás)
+            const sl = linha + dl * 2;
+            const sc = col + dc * 2;
+            if (dentroDoTabuleiro(sl, sc)) {
+                const pecaMeio = tabuleiro[nl][nc];
+                if (pecaMeio !== VAZIO && !pertenceAoJogador(pecaMeio, turnoAtual) && tabuleiro[sl][sc] === VAZIO) {
+                    movimentos.push({
+                        linha: sl,
+                        col: sc,
+                        captura: { linha: nl, col: nc }
+                    });
+                }
+            }
+        }
+    }
+
+    return movimentos;
+}
+
+// Verifica se existe alguma captura obrigatória no tabuleiro para o jogador atual
+function jogadorTemCapturaObrigatoria() {
+    for (let l = 0; l < LINHAS; l++) {
+        for (let c = 0; c < COLUNAS; c++) {
+            if (pertenceAoJogador(tabuleiro[l][c], turnoAtual)) {
+                const movs = obterMovimentosPeca(l, c, true);
+                if (movs.some(m => m.captura !== null)) return true;
+            }
+        }
+    }
+    return false;
+}
+
+function dentroDoTabuleiro(l, c) {
+    return l >= 0 && l < LINHAS && c >= 0 && c < COLUNAS;
+}
+
+// Clique no tabuleiro
+canvas.addEventListener('click', (e) => {
+    if (vencedor) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const escalaX = canvas.width / rect.width;
+    const escalaY = canvas.height / rect.height;
+
+    const x = (e.clientX - rect.left) * escalaX;
+    const y = (e.clientY - rect.top) * escalaY;
+
+    const col = Math.floor(x / TAMANHO_CASA);
+    const linha = Math.floor(y / TAMANHO_CASA);
+
+    if (!dentroDoTabuleiro(linha, col)) return;
+
+    // 1. Verifica se clicou em um destino válido da peça selecionada
+    const movimentoEscolhido = movimentosValidos.find(m => m.linha === linha && m.col === col);
+    if (pecaSelecionada && movimentoEscolhido) {
+        executarMovimento(pecaSelecionada, movimentoEscolhido);
+        return;
+    }
+
+    // 2. Se estiver no meio de uma captura múltipla, não pode trocar de peça
+    if (emCapturaMultipla) return;
+
+    // 3. Seleciona uma peça do jogador atual
+    if (pertenceAoJogador(tabuleiro[linha][col], turnoAtual)) {
+        const obrigatorioCapturar = jogadorTemCapturaObrigatoria();
+        const movs = obterMovimentosPeca(linha, col, obrigatorioCapturar);
+
+        pecaSelecionada = { linha, col };
+        movimentosValidos = obrigatorioCapturar ? movs.filter(m => m.captura !== null) : movs;
+        desenhar();
+    }
+});
+
+function executarMovimento(origem, destino) {
+    const peca = tabuleiro[origem.linha][origem.col];
+    tabuleiro[destino.linha][destino.col] = peca;
+    tabuleiro[origem.linha][origem.col] = VAZIO;
+
+    let capturou = false;
+
+    // Remove peça capturada
+    if (destino.captura) {
+        tabuleiro[destino.captura.linha][destino.captura.col] = VAZIO;
+        capturou = true;
+    }
+
+    // Verifica promoção a Dama
+    let promoveu = false;
+    if (peca === VERMELHO && destino.linha === 0) {
+        tabuleiro[destino.linha][destino.col] = DAMA_VERMELHA;
+        promoveu = true;
+    } else if (peca === PRETO && destino.linha === LINHAS - 1) {
+        tabuleiro[destino.linha][destino.col] = DAMA_PRETA;
+        promoveu = true;
+    }
+
+    // Verifica possibilidade de captura múltipla em cadeia
+    if (capturou && !promoveu) {
+        const novasCapturas = obterMovimentosPeca(destino.linha, destino.col, true).filter(m => m.captura !== null);
+        if (novasCapturas.length > 0) {
+            emCapturaMultipla = true;
+            pecaSelecionada = { linha: destino.linha, col: destino.col };
+            movimentosValidos = novasCapturas;
+            atualizarInterface();
+            desenhar();
             return;
         }
     }
 
-    // Mudança de Clima a cada 15 segundos
-    tempoClima += dt;
-    if (tempoClima >= 15) {
-        tempoClima = 0;
-        climaAtual = (climaAtual + 1) % 4;
-    }
+    // Finaliza turno
+    emCapturaMultipla = false;
+    pecaSelecionada = null;
+    movimentosValidos = [];
+    turnoAtual = turnoAtual === VERMELHO ? PRETO : VERMELHO;
 
-    // Aceleração e Frenagem
-    if (teclas.ArrowUp) {
-        jogador.velocidade += 6 * dt;
-    } else if (teclas.ArrowDown) {
-        jogador.velocidade -= 14 * dt;
-    } else {
-        jogador.velocidade -= 2 * dt; // Desaceleração natural
-    }
+    verificarVitoria();
+    atualizarInterface();
+    desenhar();
+}
 
-    // Limites de velocidade (mínimo 2 para manter o jogo andando)
-    jogador.velocidade = Math.max(2, Math.min(jogador.velMax, jogador.velocidade));
+function verificarVitoria() {
+    let contVermelho = 0;
+    let contPreto = 0;
+    let temMovimento = false;
 
-    // Movimento Lateral do Jogador
-    const sensibilidade = 1.4 * (jogador.velocidade / jogador.velMax + 0.3);
-    if (teclas.ArrowLeft) jogador.x -= sensibilidade * dt;
-    if (teclas.ArrowRight) jogador.x += sensibilidade * dt;
+    for (let l = 0; l < LINHAS; l++) {
+        for (let c = 0; c < COLUNAS; c++) {
+            const p = tabuleiro[l][c];
+            if (pertenceAoJogador(p, VERMELHO)) contVermelho++;
+            if (pertenceAoJogador(p, PRETO)) contPreto++;
 
-    // Força centrífuga nas curvas
-    jogador.x -= curvaturaAtual * (jogador.velocidade / jogador.velMax) * 0.65 * dt;
-
-    // Penalidade ao sair da pista (grama/neve)
-    if (Math.abs(jogador.x) > 0.95) {
-        jogador.velocidade *= 0.95; // Reduz velocidade na borda
-        jogador.x = Math.max(-1.25, Math.min(1.25, jogador.x));
-    }
-
-    // Distância e Curvas
-    distanciaPercorrida += jogador.velocidade * dt * 15;
-    tempoCurva -= dt;
-    if (tempoCurva <= 0) {
-        tempoCurva = 3 + Math.random() * 4;
-        curvaturaAlvo = (Math.random() * 2 - 1) * 1.2; // -1.2 a 1.2
-    }
-    curvaturaAtual += (curvaturaAlvo - curvaturaAtual) * dt * 1.5;
-
-    // Atualizar Inimigos
-    gerenciarInimigos();
-    for (let i = inimigos.length - 1; i >= 0; i--) {
-        let ini = inimigos[i];
-        let velRelativa = (jogador.velocidade - ini.velocidade) * 0.08;
-        ini.z -= velRelativa * dt;
-
-        // Contar ultrapassagem
-        if (ini.z < 0.12 && !ini.ultrapassado) {
-            ini.ultrapassado = true;
-            carrosUltrapassados++;
-            if (carrosUltrapassados >= metaUltrapassagens) {
-                // Bônus visual ou preparação para o próximo dia
+            if (pertenceAoJogador(p, turnoAtual)) {
+                if (obterMovimentosPeca(l, c, false).length > 0) {
+                    temMovimento = true;
+                }
             }
         }
+    }
 
-        // Detecção de Colisão
-        if (ini.z > 0.05 && ini.z < 0.16) {
-            if (Math.abs(jogador.x - ini.x) < 0.26) {
-                // Bateu! Perde velocidade e empurra o carro
-                jogador.velocidade = 2;
-                ini.z += 0.15;
-            }
-        }
+    placarVermelho.textContent = contVermelho;
+    placarPreto.textContent = contPreto;
 
-        // Remover inimigos que ficaram para trás ou muito longe
-        if (ini.z < -0.1 || ini.z > 1.2) {
-            inimigos.splice(i, 1);
-        }
+    if (contVermelho === 0 || (turnoAtual === VERMELHO && !temMovimento)) {
+        vencedor = 'Pretas';
+    } else if (contPreto === 0 || (turnoAtual === PRETO && !temMovimento)) {
+        vencedor = 'Vermelhas';
     }
 }
 
-// Renderização Gráfica
+function atualizarInterface() {
+    if (vencedor) {
+        turnoTexto.innerHTML = `Vitória das: <strong>${vencedor}</strong>!`;
+        return;
+    }
+
+    const corNome = turnoAtual === VERMELHO ? 'Vermelhas' : 'Pretas';
+    const avisoCaptura = jogadorTemCapturaObrigatoria() ? ' (Captura obrigatória!)' : '';
+    turnoTexto.innerHTML = `Vez das: <strong>${corNome}</strong>${avisoCaptura}`;
+}
+
+// Renderização do Tabuleiro e Peças
 function desenhar() {
-    // 1. Definir cores com base no clima
-    let corCeu = '#4da6ff';
-    let corChao1 = '#2eb82e';
-    let corChao2 = '#248f24';
-    let corPista1 = '#555555';
-    let corPista2 = '#4d4d4d';
-    let corZebra1 = '#ffffff';
-    let corZebra2 = '#ff0000';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (climaAtual === 1) { // Pôr do Sol
-        corCeu = '#ff704d';
-        corChao1 = '#b35900';
-        corChao2 = '#804000';
-    } else if (climaAtual === 2) { // Noite
-        corCeu = '#0a0a29';
-        corChao1 = '#001a00';
-        corChao2 = '#000d00';
-        corPista1 = '#1a1a1a';
-        corPista2 = '#111111';
-        corZebra1 = '#666666';
-        corZebra2 = '#440000';
-    } else if (climaAtual === 3) { // Neblina
-        corCeu = '#cccccc';
-        corChao1 = '#999999';
-        corChao2 = '#8c8c8c';
-    }
+    for (let l = 0; l < LINHAS; l++) {
+        for (let c = 0; c < COLUNAS; c++) {
+            const x = c * TAMANHO_CASA;
+            const y = l * TAMANHO_CASA;
 
-    // Desenhar Céu
-    ctx.fillStyle = corCeu;
-    ctx.fillRect(0, 0, LARGURA, HORIZONTE);
+            // Casas claras e escuras
+            const casaEscura = (l + c) % 2 !== 0;
+            ctx.fillStyle = casaEscura ? '#7a4b2a' : '#f0d9b5';
+            ctx.fillRect(x, y, TAMANHO_CASA, TAMANHO_CASA);
 
-    // Montanhas simples no horizonte
-    ctx.fillStyle = climaAtual === 2 ? '#050514' : '#3d3d5c';
-    ctx.beginPath();
-    ctx.moveTo(0, HORIZONTE);
-    for (let x = 0; x <= LARGURA; x += 60) {
-        let offset = (curvaturaAtual * 30);
-        let alturaMonte = Math.sin((x + offset) * 0.02) * 25 + 30;
-        ctx.lineTo(x, HORIZONTE - alturaMonte);
-    }
-    ctx.lineTo(LARGURA, HORIZONTE);
-    ctx.fill();
+            // Destaque da peça selecionada
+            if (pecaSelecionada && pecaSelecionada.linha === l && pecaSelecionada.col === c) {
+                ctx.fillStyle = 'rgba(255, 215, 0, 0.45)';
+                ctx.fillRect(x, y, TAMANHO_CASA, TAMANHO_CASA);
+            }
 
-    // 2. Desenhar Pista fatia por fatia (Efeito Pseudo-3D)
-    const totalFatias = ALTURA - HORIZONTE;
-    for (let y = 0; y < totalFatias; y++) {
-        let p = y / totalFatias; // 0 no horizonte, 1 na base da tela
-        let z = 1 / (p + 0.05);
-        let faixa = Math.floor(z * 2 + distanciaPercorrida) % 2 === 0;
+            // Destaque dos movimentos válidos
+            if (movimentosValidos.some(m => m.linha === l && m.col === c)) {
+                ctx.fillStyle = 'rgba(46, 204, 113, 0.55)';
+                ctx.beginPath();
+                ctx.arc(x + TAMANHO_CASA / 2, y + TAMANHO_CASA / 2, TAMANHO_CASA * 0.22, 0, Math.PI * 2);
+                ctx.fill();
+            }
 
-        // Chão lateral
-        ctx.fillStyle = faixa ? corChao1 : corChao2;
-        ctx.fillRect(0, HORIZONTE + y, LARGURA, 1);
-
-        // Cálculo da curva e largura da pista
-        let curvaOffset = curvaturaAtual * Math.pow(1 - p, 2) * 220;
-        let centroPista = (LARGURA / 2) + curvaOffset - (jogador.x * p * 180);
-        let larguraPista = (LARGURA * 0.85) * p + 20;
-        let larguraZebra = larguraPista * 0.08;
-
-        // Zebras
-        ctx.fillStyle = faixa ? corZebra1 : corZebra2;
-        ctx.fillRect(centroPista - larguraPista / 2 - larguraZebra, HORIZONTE + y, larguraPista + larguraZebra * 2, 1);
-
-        // Asfalto
-        ctx.fillStyle = faixa ? corPista1 : corPista2;
-        ctx.fillRect(centroPista - larguraPista / 2, HORIZONTE + y, larguraPista, 1);
-
-        // Faixa central tracejada
-        if (faixa && p > 0.05) {
-            ctx.fillStyle = climaAtual === 2 ? '#555555' : '#ffffff';
-            ctx.fillRect(centroPista - (2 * p), HORIZONTE + y, 4 * p, 1);
+            // Desenhar Peça
+            const peca = tabuleiro[l][c];
+            if (peca !== VAZIO) {
+                desenharPeca(x + TAMANHO_CASA / 2, y + TAMANHO_CASA / 2, peca);
+            }
         }
     }
 
-    // 3. Desenhar Inimigos (ordenados do mais distante para o mais próximo)
-    inimigos.sort((a, b) => b.z - a.z);
-    inimigos.forEach(ini => {
-        let p = 1 - ini.z;
-        if (p < 0 || p > 1) return;
+    // Tela de Vitória sobreposta
+    if (vencedor) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        let curvaOffset = curvaturaAtual * Math.pow(1 - p, 2) * 220;
-        let centroPista = (LARGURA / 2) + curvaOffset - (jogador.x * p * 180);
-        let larguraPista = (LARGURA * 0.85) * p + 20;
-
-        let screenX = centroPista + (ini.x * (larguraPista * 0.45));
-        let screenY = HORIZONTE + (p * totalFatias);
-        let escala = Math.max(0.15, p);
-
-        desenharCarro(screenX, screenY, 64 * escala, 34 * escala, ini.cor, climaAtual === 2);
-    });
-
-    // 4. Efeito de Neblina densa (cobre o horizonte)
-    if (climaAtual === 3) {
-        let grad = ctx.createLinearGradient(0, HORIZONTE - 10, 0, HORIZONTE + 160);
-        grad.addColorStop(0, 'rgba(204, 204, 204, 1)');
-        grad.addColorStop(1, 'rgba(204, 204, 204, 0)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, HORIZONTE - 10, LARGURA, 170);
-    }
-
-    // 5. Desenhar Carro do Jogador
-    let tremida = (jogador.velocidade > 10 || Math.abs(jogador.x) > 0.95) ? (Math.random() * 2 - 1) : 0;
-    desenharCarro(LARGURA / 2, ALTURA - 45 + tremida, jogador.largura, jogador.altura, jogador.cor, false);
-
-    // 6. Desenhar Painel HUD (Placar)
-    desenharHUD();
-
-    // 7. Telas de Menu / Game Over
-    if (estado === 'MENU' || estado === 'GAMEOVER') {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
-        ctx.fillRect(0, 0, LARGURA, ALTURA);
-
-        ctx.fillStyle = '#ffcc00';
-        ctx.font = 'bold 36px Courier New';
+        ctx.fillStyle = '#e0a96d';
+        ctx.font = 'bold 34px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText(estado === 'MENU' ? 'ENDURO JS' : 'FIM DE JOGO', LARGURA / 2, ALTURA / 2 - 30);
+        ctx.fillText(`VITÓRIA DAS ${vencedor.toUpperCase()}!`, canvas.width / 2, canvas.height / 2 - 10);
 
         ctx.fillStyle = '#ffffff';
-ctx.font = '18px Courier New';
-if (estado === 'GAMEOVER') {
-ctx.fillText(Você chegou até o Dia ${dia}!, LARGURA / 2, ALTURA / 2 + 10);
+        ctx.font = '18px Arial';
+        ctx.fillText('Clique em "Reiniciar Jogo" para jogar novamente', canvas.width / 2, canvas.height / 2 + 28);
+    }
 }
-ctx.fillText('Pressione ESPAÇO ou CLIQUE para jogar', LARGURA / 2, ALTURA / 2 + 50);
-}
-}
+
+function desenharPeca(cx, cy, tipo) {
+    const raio = TAMANHO_CASA * 0.38;
+    const ehVermelha = tipo === VERMELHO || tipo === DAMA_VERMELHA;
+
+    // Sombra da peça
